@@ -90,5 +90,6 @@ static inline void chardev_notify(chardev_t* dev, uint32_t flags)
 PUBLIC chardev_t* chardev_term_create(void); // stdio
 PUBLIC chardev_t* chardev_fd_create(int rfd, int wfd); // POSIX fd
 PUBLIC chardev_t* chardev_pty_create(const char* path); // POSIX pipe/pty
+PUBLIC chardev_t* chardev_handle_create(void* rh, void* wh); // Win32 HANDLE pipe
 
 #endif

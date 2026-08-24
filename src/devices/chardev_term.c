@@ -118,7 +118,9 @@ typedef struct {
 
     uint32_t flags;
     int      rfd, wfd;
+    void     *rh, *wh; // Win32 HANDLE pipe ends (handle mode)
     bool     ctrl_a;
+    bool     handles;
 } chardev_term_t;
 
 /*
@@ -182,6 +184,17 @@ static size_t term_read_raw(chardev_term_t* term, char* buffer, size_t size)
     }
     return 0;
 #elif defined(WIN32_TERM_IMPL)
+    if (term->handles) {
+        // Non-blocking readiness probe, Win32 analog of posix_fd_ready()
+        DWORD avail = 0, got = 0;
+        if (!PeekNamedPipe((HANDLE)term->rh, NULL, 0, NULL, &avail, NULL) || !avail) {
+            return 0;
+        }
+        if (!ReadFile((HANDLE)term->rh, buffer, size, &got, NULL)) {
+            return 0;
+        }
+        return got;
+    }
     HANDLE console = GetStdHandle(STD_INPUT_HANDLE);
     if (size && console && console != INVALID_HANDLE_VALUE) {
         size_t ret    = 0;
@@ -240,6 +253,13 @@ static size_t term_write_raw(chardev_term_t* term, const char* buffer, size_t si
         return EVAL_MAX(ret, 0);
     }
 #elif defined(WIN32_TERM_IMPL)
+    if (term->handles) {
+        DWORD count = 0;
+        if (!WriteFile((HANDLE)term->wh, buffer, size, &count, NULL)) {
+            return 0;
+        }
+        return count;
+    }
     HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD  count   = size;
     if (size) {
@@ -378,7 +398,10 @@ static void term_pull_rx(chardev_term_t* term)
     size_t rx_size     = EVAL_MIN(sizeof(rx_buf), ringbuf_space(&term->rx));
     rx_size            = term_read_raw(term, rx_buf, rx_size);
 
-    term_process_input(term, rx_buf, rx_size);
+    // Handle-backed chardevs carry machine data, never user input: no hotkeys
+    if (!term->handles) {
+        term_process_input(term, rx_buf, rx_size);
+    }
     ringbuf_write(&term->rx, rx_buf, rx_size);
 }
 
@@ -454,6 +477,13 @@ static void term_remove(chardev_t* dev)
     term_update(dev);
     ringbuf_destroy(&term->rx);
     ringbuf_destroy(&term->tx);
+#if defined(WIN32_TERM_IMPL)
+    if (term->handles) {
+        // We own duplicated handles; the caller retains its own originals
+        CloseHandle((HANDLE)term->rh);
+        CloseHandle((HANDLE)term->wh);
+    }
+#endif
 #ifdef POSIX_TERM_IMPL
     if (term->rfd != 0) {
         close(term->rfd);
@@ -462,7 +492,7 @@ static void term_remove(chardev_t* dev)
         close(term->wfd);
     }
 #endif
-    if (term->rfd == 0) {
+    if (!term->handles && term->rfd == 0) {
         term_detach();
     }
     free(term);
@@ -496,6 +526,45 @@ PUBLIC chardev_t* chardev_fd_create(int rfd, int wfd)
     term->wfd            = wfd;
 
     return &term->chardev;
+}
+
+PUBLIC chardev_t* chardev_handle_create(void* rh, void* wh)
+{
+#if defined(HOST_TARGET_WINNT)
+    HANDLE rdup = NULL, wdup = NULL;
+    // Duplicate the handles so either side may close its own freely
+    if (!rh || !wh
+        || !DuplicateHandle(GetCurrentProcess(), (HANDLE)rh, GetCurrentProcess(), &rdup, 0, FALSE, DUPLICATE_SAME_ACCESS)
+        || !DuplicateHandle(GetCurrentProcess(), (HANDLE)wh, GetCurrentProcess(), &wdup, 0, FALSE, DUPLICATE_SAME_ACCESS)) {
+        rvvm_error("Could not duplicate pipe handles");
+        if (rdup) {
+            CloseHandle(rdup);
+        }
+        if (wdup) {
+            CloseHandle(wdup);
+        }
+        return NULL;
+    }
+
+    chardev_term_t* term = safe_new_obj(chardev_term_t);
+    ringbuf_create(&term->rx, 256);
+    ringbuf_create(&term->tx, 256);
+    term->chardev.data   = term;
+    term->chardev.read   = term_read;
+    term->chardev.write  = term_write;
+    term->chardev.poll   = term_poll;
+    term->chardev.update = term_update;
+    term->chardev.remove = term_remove;
+    term->rh             = rdup;
+    term->wh             = wdup;
+    term->handles        = true;
+
+    return &term->chardev;
+#else
+    UNUSED(rh && wh);
+    rvvm_error("No HANDLE chardev support on this platform");
+    return NULL;
+#endif
 }
 
 PUBLIC chardev_t* chardev_pty_create(const char* path)
