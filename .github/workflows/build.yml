@@ -184,4 +184,4 @@ jobs:
         esac
         lib="build/librvvm.$ext"
         [ -f "$lib" ] || { echo "skip: $lib absent"; exit 0; }
-        aws s3 cp "$lib" "s3://${R2_BUCKET}/${{ github.sha }}/${{ matrix.os }}-${{ matrix.arch }}/librvvm.$ext"
+        aws s3 cp "$lib" "s3://${R2_BUCKET}/rvvm/${{ github.sha }}/${{ matrix.os }}-${{ matrix.arch }}/librvvm.$ext"
