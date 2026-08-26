@@ -166,3 +166,22 @@ jobs:
           !build/*.*.*
           !build/*.zip
           !build/*/
+
+    - name: Upload librvvm to R2
+      env:
+        AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        AWS_ENDPOINT_URL_S3:   https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        AWS_REGION:            auto
+        R2_BUCKET:             ${{ secrets.R2_BUCKET }}
+      shell: bash
+      run: |
+        case "${{ matrix.os }}" in
+          windows) ext=dll ;;
+          macos)   ext=dylib ;;
+          cosmo)   ext=mjs ;;
+          *)       ext=so ;;
+        esac
+        lib="build/librvvm.$ext"
+        [ -f "$lib" ] || { echo "skip: $lib absent"; exit 0; }
+        aws s3 cp "$lib" "s3://${R2_BUCKET}/${{ github.sha }}/${{ matrix.os }}-${{ matrix.arch }}/librvvm.$ext"
