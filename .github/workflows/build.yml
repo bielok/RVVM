@@ -73,7 +73,7 @@ jobs:
 
           - os: macos
             arch: arm64
-            make: make CFLAGS="-Werror -target arm64-apple-macos11 -ISDL2/include"
+            make: make USE_ASAN=1 CFLAGS="-Werror -target arm64-apple-macos11 -ISDL2/include"
             runner: macos-latest
             sdl2: yes
             test: yes
